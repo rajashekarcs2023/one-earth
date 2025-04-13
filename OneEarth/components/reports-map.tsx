@@ -7,10 +7,6 @@ import { Button } from "@/components/ui/button"
 import { ThumbsUp, Share2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useSearchParams } from "next/navigation"
-import "leaflet/dist/leaflet.css"
-import "leaflet.markercluster/dist/leaflet.markercluster.js"
-import "leaflet.markercluster/dist/MarkerCluster.css"
-import "leaflet.markercluster/dist/MarkerCluster.Default.css"
 import L from "leaflet"
 import MapFilters from "./map-filters"
 
@@ -64,9 +60,8 @@ export default function ReportsMap() {
   const highlightId = searchParams.get("highlight")
   const mapRef = useRef<L.Map | null>(null)
 
-  // Add custom CSS for the emoji markers - MOVED INSIDE THE COMPONENT
+  // Add custom CSS for the emoji markers
   useEffect(() => {
-    // Add CSS for emoji markers
     const style = document.createElement("style")
     style.textContent = `
       .emoji-marker {

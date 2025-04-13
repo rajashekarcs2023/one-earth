@@ -3,6 +3,7 @@ import "./globals.css"
 import { Inter } from "next/font/google"
 import BottomNavigation from "@/components/bottom-navigation"
 import { ThemeProvider } from "@/components/theme-provider"
+import Onboarding from "@/components/onboarding"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -18,14 +19,15 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} min-h-screen bg-gray-50`}>
-        <ThemeProvider attribute="class" defaultTheme="light">
+    <ThemeProvider attribute="class" defaultTheme="light">
+      <html lang="en" className="light" style={{ colorScheme: "light" }}>
+        <body className={`${inter.className} min-h-screen bg-gray-50`}>
+          <Onboarding />
           <main className="container mx-auto max-w-md px-4 pb-20">{children}</main>
           <BottomNavigation />
-        </ThemeProvider>
-      </body>
-    </html>
+        </body>
+      </html>
+    </ThemeProvider>
   )
 }
 

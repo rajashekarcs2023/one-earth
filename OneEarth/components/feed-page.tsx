@@ -1,33 +1,21 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { useSearchParams, useRouter } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 import FeedCard from "./feed-card"
 import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { Search, MapPin, Filter, Plus } from "lucide-react"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
+import { Search, ThumbsUp } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { Report } from "@/types/report"
+import LocationFilter from "./location-filter"
+import FeedFilters from "./feed-filters"
 
 export default function FeedPage() {
+  // Helper function to get report ID consistently (works with both MongoDB _id and regular id)
+  const getReportId = (report: Report): string => {
+    return (report._id || report.id) as string
+  }
   const [reports, setReports] = useState<Report[]>([])
   const [filteredReports, setFilteredReports] = useState<Report[]>([])
   const [loading, setLoading] = useState(true)
@@ -35,10 +23,17 @@ export default function FeedPage() {
   const [locationFilter, setLocationFilter] = useState<string | null>(null)
   const [followedReports, setFollowedReports] = useState<string[]>([])
   const [activeTab, setActiveTab] = useState("all")
+  const [onboardingComplete, setOnboardingComplete] = useState(false)
+  const [communityAssessments, setCommunityAssessments] = useState<Record<string, string>>({})
+  const [activeFilters, setActiveFilters] = useState({
+    types: [] as string[],
+    reporterSeverity: [] as number[],
+    communitySeverity: [] as string[],
+    status: [] as string[],
+  })
   const { toast } = useToast()
   const searchParams = useSearchParams()
   const highlightId = searchParams.get("highlight")
-  const router = useRouter()
 
   const fetchReports = useCallback(async () => {
     try {
@@ -69,9 +64,38 @@ export default function FeedPage() {
     if (savedFollowed) {
       setFollowedReports(JSON.parse(savedFollowed))
     }
+
+    // Check if onboarding is complete
+    const hasOnboarded = localStorage.getItem("hasOnboarded")
+    if (hasOnboarded) {
+      setOnboardingComplete(true)
+    }
+
+    // Load community assessments from localStorage
+    const savedAssessments = localStorage.getItem("communityAssessments")
+    if (savedAssessments) {
+      setCommunityAssessments(JSON.parse(savedAssessments))
+    }
   }, [fetchReports])
 
-  // Filter reports based on search term, location filter, and active tab
+  // Handle user assessment from Earth Echoes
+  const handleUserAssessment = (reportId: string, severity: number) => {
+    const severityLabel = getSeverityLabel(severity)
+    const newAssessments = { ...communityAssessments, [reportId]: severityLabel }
+    setCommunityAssessments(newAssessments)
+    localStorage.setItem("communityAssessments", JSON.stringify(newAssessments))
+  }
+
+  // Get severity label based on numeric value
+  const getSeverityLabel = (severity: number) => {
+    if (severity <= 1) return "Minor"
+    if (severity <= 2) return "Moderate"
+    if (severity <= 3) return "Significant"
+    if (severity <= 4) return "Severe"
+    return "Critical"
+  }
+
+  // Filter reports based on search term, location filter, active tab, and filters
   useEffect(() => {
     let result = [...reports]
 
@@ -89,16 +113,50 @@ export default function FeedPage() {
 
     // Filter by location
     if (locationFilter) {
-      result = result.filter((report) => report.locationName?.includes(locationFilter))
+      result = result.filter((report) => report.locationName && locationFilter ? report.locationName.includes(locationFilter) : false)
     }
 
     // Filter by tab
     if (activeTab === "following") {
-      result = result.filter((report) => followedReports.includes(report.id))
+      result = result.filter((report) => followedReports.includes(getReportId(report)))
+    }
+
+    // Apply type filters
+    if (activeFilters.types.length > 0) {
+      result = result.filter((report) => report.type && activeFilters.types.includes(report.type))
+    }
+
+    // Apply reporter severity filters
+    if (activeFilters.reporterSeverity.length > 0) {
+      result = result.filter((report) => activeFilters.reporterSeverity.includes(report.severity))
+    }
+
+    // Apply community severity filters
+    if (activeFilters.communitySeverity.length > 0) {
+      result = result.filter((report) => {
+        const assessment = communityAssessments[getReportId(report)]
+        return assessment && activeFilters.communitySeverity.includes(assessment)
+      })
+    }
+
+    // Apply status filters
+    if (activeFilters.status.length > 0) {
+      result = result.filter((report) => {
+        if (activeFilters.status.includes("Verified") && report.verifiedBy) {
+          return true
+        }
+        if (activeFilters.status.includes("Resolved") && report.actionStatus?.acted) {
+          return true
+        }
+        if (activeFilters.status.includes("Pending") && !report.verifiedBy && !report.actionStatus?.acted) {
+          return true
+        }
+        return false
+      })
     }
 
     setFilteredReports(result)
-  }, [searchTerm, locationFilter, reports, activeTab, followedReports])
+  }, [searchTerm, locationFilter, reports, activeTab, followedReports, activeFilters, communityAssessments])
 
   const handleUpvote = async (reportId: string) => {
     try {
@@ -115,7 +173,7 @@ export default function FeedPage() {
       if (data.success) {
         // Update the reports state with the updated report
         const updatedReports = reports.map((report) =>
-          report.id === reportId ? { ...report, upvotes: report.upvotes + 1 } : report,
+          getReportId(report) === reportId ? { ...report, upvotes: report.upvotes + 1 } : report,
         )
         setReports(updatedReports)
 
@@ -157,6 +215,15 @@ export default function FeedPage() {
     localStorage.setItem("followedReports", JSON.stringify(newFollowed))
   }
 
+  const handleFilterChange = (filters: {
+    types: string[]
+    reporterSeverity: number[]
+    communitySeverity: string[]
+    status: string[]
+  }) => {
+    setActiveFilters(filters)
+  }
+
   // Group similar reports (in a real app, this would be done on the server)
   const groupedReports = filteredReports.reduce((acc, report) => {
     // For this demo, we'll consider reports of the same type within 0.01 degrees as similar
@@ -176,15 +243,6 @@ export default function FeedPage() {
     return acc
   }, [] as Report[][])
 
-  const locationOptions = [
-    { label: "All Locations", value: null },
-    { label: "New York City, NY", value: "New York City" },
-    { label: "Brooklyn, NY", value: "Brooklyn" },
-    { label: "Santa Cruz, CA", value: "Santa Cruz" },
-    { label: "California", value: "California" },
-    { label: "United States", value: "USA" },
-  ]
-
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -194,10 +252,10 @@ export default function FeedPage() {
   }
 
   return (
-    <div className="py-6 space-y-4 relative pb-16">
+    <div className="py-6 space-y-4 relative pb-24">
       <div className="text-center">
-        <h1 className="text-2xl font-bold text-emerald-800">Activity Feed 📱</h1>
-        <p className="text-gray-600">See the latest environmental reports in your area</p>
+        <h1 className="text-2xl font-bold text-emerald-800">Planet Pulse 🌍</h1>
+        <p className="text-gray-600">Real-time updates from people protecting the Earth</p>
       </div>
 
       {/* Search and Filter Bar */}
@@ -213,94 +271,56 @@ export default function FeedPage() {
         </div>
 
         <div className="flex justify-between items-center">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="flex items-center gap-1">
-                <MapPin className="h-4 w-4" />
-                {locationFilter || "All Locations"}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-56">
-              <DropdownMenuLabel>Filter by Location</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                {locationOptions.map((option) => (
-                  <DropdownMenuItem
-                    key={option.value || "all"}
-                    onClick={() => setLocationFilter(option.value)}
-                    className={locationFilter === option.value ? "bg-emerald-50" : ""}
-                  >
-                    {option.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <LocationFilter onLocationChange={setLocationFilter} currentLocation={locationFilter} />
+          <FeedFilters onFilterChange={handleFilterChange} />
+        </div>
+      </div>
 
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="flex items-center gap-1">
-                <Filter className="h-4 w-4" />
-                More Filters
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Filter Reports</DialogTitle>
-                <DialogDescription>Select criteria to filter environmental reports</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <h4 className="font-medium">Report Type</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {["All Types", "Dumping", "Deforestation", "Water Pollution", "Air Pollution"].map((type) => (
-                      <Button
-                        key={type}
-                        variant="outline"
-                        size="sm"
-                        className={type === "All Types" ? "bg-emerald-50" : ""}
-                      >
-                        {type}
-                      </Button>
-                    ))}
+      {/* Trending Reports */}
+      <div className="mb-4">
+        <h2 className="text-sm font-medium text-gray-700 mb-3">🔥 Trending Issues</h2>
+        <div className="overflow-x-auto pb-2">
+          <div className="flex space-x-3">
+            {reports
+              .filter((report) => report.upvotes > 3)
+              .slice(0, 5)
+              .map((report) => (
+                <div
+                  key={getReportId(report)}
+                  className="flex-shrink-0 w-40 rounded-lg overflow-hidden border shadow-sm hover:shadow-md transition-shadow"
+                  onClick={() => {
+                    const element = document.getElementById(`report-${getReportId(report)}`)
+                    if (element) {
+                      element.scrollIntoView({ behavior: "smooth" })
+                      setTimeout(() => {
+                        element.classList.add("bg-emerald-50")
+                        setTimeout(() => {
+                          element.classList.remove("bg-emerald-50")
+                        }, 2000)
+                      }, 500)
+                    }
+                  }}
+                >
+                  <div className="relative h-24">
+                    <img
+                      src={report.image_url || "/placeholder.svg"}
+                      alt={report.label}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black to-transparent p-2">
+                      <div className="flex items-center text-white">
+                        <ThumbsUp className="h-3 w-3 mr-1" />
+                        <span className="text-xs">{report.upvotes}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="p-2">
+                    <p className="text-xs font-medium line-clamp-2">{report.label}</p>
+                    <p className="text-xs text-gray-500 mt-1">{report.locationName}</p>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <h4 className="font-medium">Severity</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {["All", "1+", "2+", "3+", "4+", "5"].map((severity) => (
-                      <Button
-                        key={severity}
-                        variant="outline"
-                        size="sm"
-                        className={severity === "All" ? "bg-emerald-50" : ""}
-                      >
-                        {severity}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <h4 className="font-medium">Status</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {["All", "Verified", "Resolved", "Pending"].map((status) => (
-                      <Button
-                        key={status}
-                        variant="outline"
-                        size="sm"
-                        className={status === "All" ? "bg-emerald-50" : ""}
-                      >
-                        {status}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <Button className="bg-emerald-600 hover:bg-emerald-700">Apply Filters</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              ))}
+          </div>
         </div>
       </div>
 
@@ -315,20 +335,26 @@ export default function FeedPage() {
             <div className="space-y-4">
               {groupedReports.map((group) => {
                 const primaryReport = group[0]
-                const isHighlighted = highlightId === primaryReport.id
-                const isFollowed = followedReports.includes(primaryReport.id)
+                const isHighlighted = highlightId === getReportId(primaryReport)
+                const isFollowed = followedReports.includes(getReportId(primaryReport))
 
                 // If there's only one report in the group, show it normally
                 if (group.length === 1) {
                   return (
-                    <FeedCard
-                      key={primaryReport.id}
-                      report={primaryReport}
-                      isHighlighted={isHighlighted}
-                      isFollowed={isFollowed}
-                      onUpvote={handleUpvote}
-                      onFollow={handleFollow}
-                    />
+                    <div
+                      id={`report-${getReportId(primaryReport)}`}
+                      key={getReportId(primaryReport)}
+                      className="transition-colors duration-500"
+                    >
+                      <FeedCard
+                        report={primaryReport}
+                        isHighlighted={isHighlighted}
+                        isFollowed={isFollowed}
+                        onUpvote={handleUpvote}
+                        onFollow={handleFollow}
+                        onUserAssessment={(severity) => handleUserAssessment(getReportId(primaryReport), severity)}
+                      />
+                    </div>
                   )
                 }
 
@@ -343,14 +369,20 @@ export default function FeedPage() {
                 }
 
                 return (
-                  <FeedCard
-                    key={primaryReport.id}
-                    report={enhancedReport}
-                    isHighlighted={isHighlighted}
-                    isFollowed={isFollowed}
-                    onUpvote={handleUpvote}
-                    onFollow={handleFollow}
-                  />
+                  <div
+                    id={`report-${getReportId(primaryReport)}`}
+                    key={getReportId(primaryReport)}
+                    className="transition-colors duration-500"
+                  >
+                    <FeedCard
+                      report={enhancedReport}
+                      isHighlighted={isHighlighted}
+                      isFollowed={isFollowed}
+                      onUpvote={handleUpvote}
+                      onFollow={handleFollow}
+                      onUserAssessment={(severity) => handleUserAssessment(getReportId(primaryReport), severity)}
+                    />
+                  </div>
                 )
               })}
             </div>
@@ -364,16 +396,18 @@ export default function FeedPage() {
           {filteredReports.length > 0 ? (
             <div className="space-y-4">
               {filteredReports
-                .filter((report) => followedReports.includes(report.id))
+                .filter((report) => followedReports.includes(getReportId(report)))
                 .map((report) => (
-                  <FeedCard
-                    key={report.id}
-                    report={report}
-                    isHighlighted={highlightId === report.id}
-                    isFollowed={true}
-                    onUpvote={handleUpvote}
-                    onFollow={handleFollow}
-                  />
+                  <div id={`report-${getReportId(report)}`} key={getReportId(report)} className="transition-colors duration-500">
+                    <FeedCard
+                      report={report}
+                      isHighlighted={highlightId === getReportId(report)}
+                      isFollowed={true}
+                      onUpvote={handleUpvote}
+                      onFollow={handleFollow}
+                      onUserAssessment={(severity) => handleUserAssessment(getReportId(report), severity)}
+                    />
+                  </div>
                 ))}
             </div>
           ) : (
@@ -385,13 +419,7 @@ export default function FeedPage() {
         </TabsContent>
       </Tabs>
 
-      {/* Floating Action Button */}
-      <Button
-        className="fixed bottom-20 right-6 h-14 w-14 rounded-full shadow-lg bg-emerald-600 hover:bg-emerald-700"
-        onClick={() => router.push("/")}
-      >
-        <Plus className="h-6 w-6" />
-      </Button>
+      {/* Removed the Enhanced Floating Action Button */}
     </div>
   )
 }

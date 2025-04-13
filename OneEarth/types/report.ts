@@ -6,12 +6,21 @@ export interface Comment {
   userName: string
 }
 
+export interface Verification {
+  timestamp: string
+  description: string
+  photoUrl: string
+  verifiedBy: string
+}
+
 export interface Report {
-  id: string
+  id?: string
+  _id?: string
   image_url: string
   label: string
   severity: number
   upvotes: number
+  followers?: number
   location: {
     lat: number
     lng: number
@@ -27,6 +36,7 @@ export interface Report {
     status: string
   }
   comments?: Comment[]
+  verifications?: Verification[]
 }
 
 export interface ReportFormData {
